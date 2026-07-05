@@ -1,38 +1,47 @@
 # remotemouse-wayland-bridge
 
 Fixes remote-mouse / remote-input apps (RemoteMouse, and anything else built
-on the X11 XTest extension) that connect fine but don't move the cursor when
-running under a native Wayland session on KDE Plasma (KWin).
+on the X11 XTest extension) that connect fine but don't move the cursor,
+click, scroll, or type when running under a native Wayland session on KDE
+Plasma (KWin).
 
 ## The problem
 
-Apps like RemoteMouse move the cursor using the X11 **XTest** extension
-(`XTestFakeMotionEvent`/`XTestFakeButtonEvent`), historically the standard
-way for a remote-control app to inject input.
+Apps like RemoteMouse move the cursor and send keystrokes using the X11
+**XTest** extension (`XTestFakeMotionEvent`/`XTestFakeButtonEvent`/
+`XTestFakeKeyEvent`), historically the standard way for a remote-control app
+to inject input.
 
 Modern KWin (Plasma 6) treats XTest-injected input as untrusted by default:
-it updates the position XWayland reports back to X11 clients (so tools like
-`xdotool getmouselocation` show it "working"), but it does **not** forward
-that motion into the real Wayland input pipeline that actually drives the
-visible cursor. This is a deliberate security restriction — it stops an X11
-client from silently taking control of a Wayland session — but it silently
-breaks any app that relies on XTest for input injection.
+it updates the position/key state XWayland reports back to X11 clients (so
+tools like `xdotool getmouselocation` show it "working"), but it does **not**
+forward that input into the real Wayland input pipeline that actually drives
+the visible cursor and focused application. This is a deliberate security
+restriction — it stops an X11 client from silently taking control of a
+Wayland session — but it silently breaks any app that relies on XTest for
+input injection.
 
 Symptoms:
 - The remote app connects fine.
 - Non-input actions (e.g. a "sleep" button that goes over D-Bus) work.
 - The cursor position changes at the X11 protocol level (visible to
-  `xdotool getmouselocation`) but **the on-screen cursor never moves**.
+  `xdotool getmouselocation`) but **the on-screen cursor never moves**, mouse
+  clicks/scroll do nothing, and keyboard input never reaches any app.
 
 ## The fix
 
-This bridge watches X11's **XInput2** event stream, filtered to only the
-`Virtual core XTEST pointer` device (the device XTest-based input always
-shows up as — never anything else, so this cannot create a feedback loop
-with its own output), and replays every motion/click through a real
-`/dev/uinput` virtual mouse device. Input injected via uinput is
-indistinguishable from a real physical mouse at the kernel/libinput level,
-so KWin moves the actual visible cursor.
+This bridge watches X11's **XInput2** event stream, filtered to only the two
+dedicated `Virtual core XTEST pointer` / `Virtual core XTEST keyboard`
+devices (the devices XTest-based input always shows up as — never anything
+else, so this cannot create a feedback loop with its own output), and
+replays every motion/click/scroll/keypress through real `/dev/uinput`
+virtual mouse + keyboard devices. Input injected via uinput is
+indistinguishable from real hardware at the kernel/libinput level, so KWin
+moves the actual visible cursor and delivers keystrokes to the focused app.
+
+Keyboard events are remapped from X11 keycodes to Linux/evdev keycodes via
+the fixed `X11 keycode = evdev keycode + 8` offset used by every Linux X
+server on the evdev/libinput input driver.
 
 Motion is replayed as **absolute** positioning (like a graphics tablet)
 rather than relative deltas. XTest's reported position is already
