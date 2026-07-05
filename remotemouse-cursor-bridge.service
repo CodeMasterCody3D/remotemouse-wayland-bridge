@@ -1,0 +1,12 @@
+[Unit]
+Description=Bridge XTest fake input (RemoteMouse and similar apps) into a real Wayland cursor via uinput
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/python3 %h/remotemouse-wayland-bridge/bridge.py
+Restart=on-failure
+RestartSec=2
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=default.target
